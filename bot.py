@@ -99,38 +99,32 @@ def compose_research_digest(category: dict, merchant: dict, trigger: dict) -> Co
     # Build message
     title = digest_item.get("title", "industry research")
     source = digest_item.get("source", "recent study")
-    trial_n = digest_item.get("trial_n")
+    trial_n = digest_item.get("trial_n", "N/A")
 
     if category_slug == "dentists":
         body = (
-            f"Hi {owner_name}! {source} just landed. "
-            f"Key finding: {title}. "
-            f"Relevant to your practice? "
-            f"Want me to pull the full abstract + draft a patient note you can share?"
+            f"Hi {owner_name}! {source} (n={trial_n}): {title}. "
+            f"Relevant to your practice—want me to draft a patient note?"
         )
     elif category_slug == "salons":
         body = (
-            f"Hi {owner_name}! New industry research: {title}. "
-            f"Could be useful for your clientele. "
-            f"Want me to turn it into a post for your socials + WA broadcast?"
+            f"Hi {owner_name}! New: {title} (via {source}). "
+            f"Worth sharing with clients—turn into a post?"
         )
     elif category_slug == "restaurants":
         body = (
-            f"Hey {owner_name}, quick heads-up: {title}. "
-            f"Might affect how you plan your menu this quarter. "
-            f"Want me to draft talking points for your team?"
+            f"Hey {owner_name}, {source}: {title}. "
+            f"Could affect your menu strategy—want talking points for your team?"
         )
     elif category_slug == "gyms":
         body = (
-            f"Hi {owner_name}, new fitness research: {title}. "
-            f"Worth using in your member communication. "
-            f"Want a 2-min summary + a social post you can use?"
+            f"Hi {owner_name}, fitness research: {title} (n={trial_n}). "
+            f"Share with members—want a summary + social post?"
         )
     else:  # pharmacies
         body = (
-            f"Hi {owner_name}, compliance update: {title}. "
-            f"You should be aware of this. "
-            f"Want me to draft a team memo + customer-facing note?"
+            f"Hi {owner_name}, compliance info: {title}. "
+            f"Worth a team memo—shall I draft one?"
         )
 
     # Truncate to 320 chars
@@ -146,9 +140,9 @@ def compose_research_digest(category: dict, merchant: dict, trigger: dict) -> Co
         template_name=f"vera_research_digest_{category_slug[:3]}_v1",
         template_params=[owner_name, title, source],
         body=body,
-        cta="open_ended",
-        suppression_key=trigger.get("suppression_key", f"research:{category_slug}"),
-        rationale=f"External research digest ({source}). Merchant-relevant topic. Open-ended CTA low friction."
+        cta="binary_yes_no",
+        suppression_key=trigger.get("suppression_key", f"research:{category_slug}:{top_item_id}"),
+        rationale=f"Research digest with specificity (n={trial_n}, source). Direct ask."
     )
 
 def compose_perf_dip(category: dict, merchant: dict, trigger: dict) -> ComposedAction:
@@ -188,30 +182,35 @@ def compose_recall_reminder(category: dict, merchant: dict, trigger: dict, custo
     merchant_id = merchant["merchant_id"]
     customer_id = customer["customer_id"]
 
-    cust_name = customer.get("identity", {}).get("name", "Customer")
+    cust_name = customer.get("identity", {}).get("name", "Customer").split()[0]  # First name only
     merchant_name = merchant.get("identity", {}).get("name", "Our clinic")
     lang_pref = customer.get("identity", {}).get("language_pref", "en")
 
     # Get real offers if available
     offers = merchant.get("offers", [])
-    offer_title = offers[0]["title"] if offers else "Service"
+    offer_title = offers[0].get("title", "service") if offers else "service"
+    offer_price = offers[0].get("price", "₹599") if offers else "₹599"
+    
+    # Ensure offer_price is clean (remove duplicates if present)
+    if " @ " in offer_price:
+        offer_price = offer_price.split(" @ ")[0]  # Take first price only
 
     # Build message with language pref
     if "hi" in lang_pref.lower():
         body = (
             f"Hi {cust_name}, {merchant_name} yahan 🏥 "
             f"Aapki last visit se 6 months ho gaye — "
-            f"recall check-up abhi due hai. "
-            f"Apke liye slots ready hain. "
-            f"{offer_title} @ ₹599. "
-            f"Reply YES to book, or suggest a time."
+            f"recall due. "
+            f"Slots ready hain. "
+            f"{offer_title} @ {offer_price}. "
+            f"Reply YES to book."
         )
     else:
         body = (
             f"Hi {cust_name}, {merchant_name} here 🏥 "
-            f"It's been 6 months since your last visit — "
-            f"your recall is due. "
-            f"We have slots available for {offer_title}. "
+            f"It's been 6 months—your recall is due. "
+            f"Slots available. "
+            f"{offer_title} @ {offer_price}. "
             f"Reply YES to book."
         )
 
@@ -225,11 +224,11 @@ def compose_recall_reminder(category: dict, merchant: dict, trigger: dict, custo
         send_as="merchant_on_behalf",
         trigger_id=trigger["id"],
         template_name="merchant_recall_reminder_v1",
-        template_params=[cust_name, merchant_name, offer_title],
+        template_params=[cust_name, merchant_name, offer_title, offer_price],
         body=body,
         cta="binary_yes_no",
         suppression_key=trigger.get("suppression_key", f"recall:{customer_id}:6mo"),
-        rationale=f"Customer recall due. Language pref: {lang_pref}. Specific offer + named slots."
+        rationale=f"Recall due. Language: {lang_pref}. Specific offer + booking CTA."
     )
 
 def compose_curious_ask(category: dict, merchant: dict, trigger: dict) -> ComposedAction:
@@ -303,6 +302,8 @@ def compose_message(
     """Main composer: route by trigger kind."""
 
     trigger_kind = trigger.get("kind", "unknown")
+    merchant_id = merchant["merchant_id"]
+    owner_name = merchant.get("identity", {}).get("owner_first_name", "there")
 
     if trigger_kind == "research_digest":
         return compose_research_digest(category, merchant, trigger)
@@ -314,26 +315,110 @@ def compose_message(
         return compose_curious_ask(category, merchant, trigger)
     elif trigger_kind in ["perf_spike", "milestone_reached"]:
         return compose_offer_spotlight(category, merchant, trigger)
-    else:
-        # Fallback: generic engagement
-        owner_name = merchant.get("identity", {}).get("owner_first_name", "there")
+    elif trigger_kind == "compliance_update":
+        # New: Compliance/regulatory trigger
+        payload = trigger.get("payload", {})
+        compliance_item = payload.get("title", "compliance update")
         body = (
-            f"Hi {owner_name}, wanted to check in. "
-            f"Any blockers I can help with this week? "
-            f"Your profile is looking good."
+            f"Hi {owner_name}, new compliance requirement: {compliance_item}. "
+            f"You'll want your team aware. Need me to draft a memo?"
         )
         return ComposedAction(
-            conversation_id=f"conv_{merchant['merchant_id']}_generic",
-            merchant_id=merchant["merchant_id"],
+            conversation_id=f"conv_{merchant_id}_compliance",
+            merchant_id=merchant_id,
+            customer_id=None,
+            send_as="vera",
+            trigger_id=trigger["id"],
+            template_name="vera_compliance_alert_v1",
+            template_params=[owner_name, compliance_item],
+            body=body[:320],
+            cta="binary_yes_no",
+            suppression_key=trigger.get("suppression_key", f"compliance:{trigger_kind}"),
+            rationale="Compliance alert. Specific requirement. Direct ask."
+        )
+    elif trigger_kind == "customer_feedback_summary":
+        # New: Customer feedback trigger
+        payload = trigger.get("payload", {})
+        sentiment = payload.get("sentiment", "mixed")
+        summary = payload.get("summary", "recent feedback")
+        body = (
+            f"Hi {owner_name}, {sentiment} customer feedback this week: {summary}. "
+            f"Want me to suggest action items?"
+        )
+        return ComposedAction(
+            conversation_id=f"conv_{merchant_id}_feedback",
+            merchant_id=merchant_id,
+            customer_id=None,
+            send_as="vera",
+            trigger_id=trigger["id"],
+            template_name="vera_feedback_alert_v1",
+            template_params=[owner_name, sentiment],
+            body=body[:320],
+            cta="binary_yes_no",
+            suppression_key=trigger.get("suppression_key", f"feedback:{trigger_kind}"),
+            rationale="Customer feedback summary. Sentiment-tagged. Actionable."
+        )
+    elif trigger_kind == "offer_expiry_due":
+        # New: Offer expiry reminder
+        payload = trigger.get("payload", {})
+        offers = merchant.get("offers", [])
+        if offers:
+            offer = offers[0]
+            offer_title = offer.get("title", "your offer")
+            days_left = payload.get("days_left", 2)
+            body = (
+                f"Hi {owner_name}, {offer_title} expires in {days_left} days! "
+                f"Want to extend it or push it out to inactive customers?"
+            )
+        else:
+            body = (
+                f"Hi {owner_name}, a key offer is expiring soon. "
+                f"Want me to suggest alternatives?"
+            )
+        return ComposedAction(
+            conversation_id=f"conv_{merchant_id}_offer_expiry",
+            merchant_id=merchant_id,
+            customer_id=None,
+            send_as="vera",
+            trigger_id=trigger["id"],
+            template_name="vera_offer_expiry_v1",
+            template_params=[owner_name],
+            body=body[:320],
+            cta="binary_yes_no",
+            suppression_key=trigger.get("suppression_key", f"expiry:{trigger_kind}"),
+            rationale="Offer expiry imminent. Time-sensitive. Action required."
+        )
+    else:
+        # Fallback: more specific based on trigger payload
+        payload = trigger.get("payload", {})
+        title = payload.get("title", "")
+        urgency = payload.get("urgency", "normal")
+        
+        if title:
+            # Use the trigger title if available
+            body = (
+                f"Hi {owner_name}, quick update: {title}. "
+                f"Wanted to flag it—impact for your business?"
+            )
+        else:
+            # Generic but still actionable
+            body = (
+                f"Hi {owner_name}, have a quick question about your business. "
+                f"Any blockers this week I can help with?"
+            )
+        
+        return ComposedAction(
+            conversation_id=f"conv_{merchant_id}_generic_{trigger_kind}",
+            merchant_id=merchant_id,
             customer_id=None,
             send_as="vera",
             trigger_id=trigger["id"],
             template_name="vera_generic_checkin_v1",
-            template_params=[owner_name],
-            body=body,
+            template_params=[owner_name, trigger_kind],
+            body=body[:320],
             cta="open_ended",
-            suppression_key=trigger.get("suppression_key", f"generic:{merchant['merchant_id']}"),
-            rationale="Generic checkin for unmapped trigger kind."
+            suppression_key=trigger.get("suppression_key", f"generic:{merchant_id}:{trigger_kind}"),
+            rationale=f"Unmapped trigger kind: {trigger_kind}. Generic engagement."
         )
 
 # ============================================================================
@@ -424,14 +509,15 @@ async def tick(body: TickBody):
     actions = []
 
     for trg_id in body.available_triggers:
-        # Skip if already suppressed
+        # Get trigger context
         trg_data = contexts.get(("trigger", trg_id), {})
-        suppression_key = trg_data.get("payload", {}).get("suppression_key", "")
-        if suppression_key in suppressed:
-            continue
-
         trg = trg_data.get("payload", {})
         if not trg:
+            continue
+
+        # Skip if already suppressed
+        suppression_key = trg.get("suppression_key", "")
+        if suppression_key in suppressed:
             continue
 
         merchant_id = trg.get("merchant_id")
@@ -481,12 +567,20 @@ async def tick(body: TickBody):
                 "rationale": composed.rationale
             })
 
-            # Track conversation
+            # Track conversation and mark as suppressed
             if composed.conversation_id not in conversations:
                 conversations[composed.conversation_id] = {
                     "turns": [],
-                    "last_sent_body": composed.body
+                    "last_sent_body": composed.body,
+                    "trigger_id": trg_id,
+                    "merchant_id": merchant_id,
+                    "customer_id": customer_id
                 }
+            
+            # Add suppression key to prevent re-sending
+            if suppression_key:
+                suppressed.add(suppression_key)
+
         except Exception as e:
             print(f"Error composing for {trg_id}: {e}")
             continue
@@ -499,73 +593,141 @@ async def reply(body: ReplyBody):
     conv_id = body.conversation_id
 
     if conv_id not in conversations:
-        conversations[conv_id] = {"turns": [], "last_sent_body": ""}
+        conversations[conv_id] = {
+            "turns": [],
+            "last_sent_body": "",
+            "auto_reply_count": 0
+        }
 
+    conv = conversations[conv_id]
+    
     # Record the reply
-    conversations[conv_id]["turns"].append({
+    turn = {
         "from": body.from_role,
         "message": body.message,
         "turn": body.turn_number
-    })
+    }
+    conv["turns"].append(turn)
 
-    # Detect auto-reply
-    message_lower = body.message.lower()
+    message_lower = body.message.lower().strip()
+
+    # ========== AUTO-REPLY DETECTION ==========
     auto_reply_phrases = [
         "thank you for contacting",
         "our team will respond",
         "auto-reply",
         "out of office",
-        "away from office"
+        "away from office",
+        "away from the office",
+        "i am out of office",
+        "thanks for your message",
+        "will get back to you",
+        "will respond"
     ]
     is_auto_reply = any(phrase in message_lower for phrase in auto_reply_phrases)
 
-    # Simple state machine
     if is_auto_reply:
-        # If this is the 2nd auto-reply in a row, back off longer
-        turn_num = body.turn_number
-        if turn_num >= 4:  # 3+ auto-replies
+        conv["auto_reply_count"] = conv.get("auto_reply_count", 0) + 1
+        
+        if conv["auto_reply_count"] >= 3:
             return {
                 "action": "end",
-                "rationale": "Auto-reply detected 3+ times. Merchant unavailable. Closing conversation."
+                "body": "I see you're out of office. Will follow up next week.",
+                "rationale": "Auto-reply detected 3+ times. Merchant unavailable."
             }
-        elif turn_num >= 3:
+        elif conv["auto_reply_count"] >= 2:
             return {
                 "action": "wait",
                 "wait_seconds": 86400,
-                "rationale": "Same auto-reply 2x in a row. Waiting 24h for real reply."
+                "rationale": "Second auto-reply. Waiting 24h for availability."
             }
         else:
             return {
                 "action": "wait",
                 "wait_seconds": 14400,
-                "rationale": "Detected auto-reply. Merchant may be busy. Waiting 4h."
+                "rationale": "Auto-reply detected. Waiting 4h before retry."
             }
 
-    # Detect negative signals
-    negative_signals = ["not interested", "stop", "no", "unsubscribe", "remove me"]
+    # ========== NEGATIVE SIGNALS ==========
+    negative_signals = [
+        "not interested",
+        "stop",
+        "no thanks",
+        "unsubscribe",
+        "remove me",
+        "don't contact",
+        "not relevant"
+    ]
     if any(sig in message_lower for sig in negative_signals):
         return {
             "action": "end",
-            "rationale": "Merchant opted out. Closing conversation."
+            "body": "Understood. We'll respect your preference.",
+            "rationale": "Merchant opted out."
         }
 
-    # Merchant replied positively or with a question
-    if any(word in message_lower for word in ["yes", "ok", "sure", "please", "go"]):
-        # Positive reply: offer next step
+    # ========== POSITIVE SIGNALS ==========
+    positive_signals = ["yes", "ok", "sure", "please", "go", "yup", "yeah", "absolutely"]
+    is_positive = any(word in message_lower for word in positive_signals)
+
+    if is_positive:
+        # Check if customer is trying to book a time
+        has_time_info = any(word in message_lower for word in ["wed", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "am", "pm", "o'clock", "6pm", "5pm", "4pm", "3pm", "2pm", "1pm", "booking", "book"])
+        
+        if has_time_info:
+            # Booking confirmation - extract merchant context for personalization
+            merchant_id = conv.get("merchant_id")
+            customer_id = conv.get("customer_id")
+            
+            if merchant_id and customer_id:
+                merchant_data = contexts.get(("merchant", merchant_id), {})
+                merchant = merchant_data.get("payload", {})
+                merchant_name = merchant.get("identity", {}).get("name", "our clinic")
+                
+                customer_data = contexts.get(("customer", customer_id), {})
+                customer = customer_data.get("payload", {})
+                cust_name = customer.get("identity", {}).get("name", "Customer").split()[0] if customer else "you"
+                
+                return {
+                    "action": "send",
+                    "body": f"Perfect! Booking confirmed for {cust_name} at {merchant_name}. You'll get a reminder 2h before. Thanks!",
+                    "cta": "none",
+                    "rationale": "Booking request with specific time. Confirming with date/merchant."
+                }
+            else:
+                return {
+                    "action": "send",
+                    "body": "Great! Your booking is confirmed. Check your email for details.",
+                    "cta": "none",
+                    "rationale": "Booking confirmation."
+                }
+        else:
+            # General positive reply
+            return {
+                "action": "send",
+                "body": "Awesome! I'm working on that now. You'll hear back within 30 min.",
+                "cta": "none",
+                "rationale": "Positive engagement. Setting expectations."
+            }
+
+    # ========== UNCLEAR / QUESTION ==========
+    question_signals = ["?", "what", "how", "which", "when", "where", "why", "tell me"]
+    is_question = any(sig in message_lower for sig in question_signals)
+    
+    if is_question:
         return {
             "action": "send",
-            "body": "Great! Setting it up now. I'll send you a draft within 30 min. Watch for it.",
-            "cta": "none",
-            "rationale": "Acknowledged positive reply. Following up with concrete action."
-        }
-    else:
-        # Question or unclear
-        return {
-            "action": "send",
-            "body": "Got it. Can you tell me a bit more about what would be most helpful?",
+            "body": "Good question! Can you share a bit more context? That helps me give better suggestions.",
             "cta": "open_ended",
-            "rationale": "Clarifying merchant's needs."
+            "rationale": "Merchant asking clarifying question. Encourage more info."
         }
+
+    # ========== DEFAULT: ACKNOWLEDGMENT ==========
+    return {
+        "action": "send",
+        "body": "Thanks for getting back to me! Anything else I can help clarify?",
+        "cta": "open_ended",
+        "rationale": "Generic acknowledgment for neutral replies."
+    }
 
 @app.post("/v1/teardown")
 async def teardown():
